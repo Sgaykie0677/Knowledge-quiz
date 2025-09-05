@@ -3,285 +3,281 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>General Knowledge Quiz</title>
+    <title>Shopping List</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            background: #f3f4f6;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            padding: 1rem;
+            background-color: #f3f4f6;
         }
         .container {
-            width: 100%;
-            max-width: 768px;
-            background: white;
+            max-width: 600px;
+            margin: 2rem auto;
             padding: 2rem;
-            border-radius: 1.5rem;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
-        .btn {
-            @apply bg-blue-500 text-white font-bold py-3 px-6 rounded-full transition-transform transform hover:scale-105 active:scale-95 duration-200 shadow-md;
-        }
-        .btn:disabled {
-            @apply bg-gray-400 cursor-not-allowed;
-        }
-        .option-btn {
-            @apply bg-gray-100 text-gray-800 font-medium py-3 px-4 rounded-xl text-left transition-colors duration-200 hover:bg-gray-200;
-        }
-        .correct {
-            @apply bg-green-500 text-white hover:bg-green-600;
-        }
-        .incorrect {
-            @apply bg-red-500 text-white hover:bg-red-600;
+            background-color: white;
+            border-radius: 1rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
     </style>
 </head>
-<body>
-    <div class="container" id="main-container">
-        <!-- Content will be rendered here by JavaScript -->
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="container">
+        <h1 class="text-4xl font-bold text-center mb-6 text-gray-800">My Shopping List</h1>
+        <p class="text-center text-sm text-gray-500 mb-6">User ID: <span id="userIdDisplay" class="font-mono">Loading...</span></p>
+
+        <div id="loadingIndicator" class="text-center text-gray-500 mb-4">
+            <p>Loading items...</p>
+        </div>
+
+        <ul id="shoppingList" class="space-y-4"></ul>
+
+        <form id="addItemForm" class="mt-8 flex gap-2">
+            <input type="text" id="itemInput" placeholder="Add a new item..." class="flex-1 p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200" required>
+            <button type="submit" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all duration-200 shadow-md">Add Item</button>
+        </form>
+
+        <div id="modal-container" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-xl shadow-lg w-80">
+                <h3 class="text-lg font-semibold mb-2" id="modal-title"></h3>
+                <p class="text-gray-600 mb-4" id="modal-message"></p>
+                <input type="text" id="modal-input" class="w-full p-2 mb-4 border border-gray-300 rounded-lg hidden">
+                <div class="flex justify-end gap-2">
+                    <button id="modal-cancel-btn" class="px-4 py-2 text-gray-600 bg-gray-200 rounded-xl hover:bg-gray-300 transition-all">Cancel</button>
+                    <button id="modal-ok-btn" class="px-4 py-2 text-white bg-red-600 rounded-xl hover:bg-red-700 transition-all">OK</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, collection, query, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc, setDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global variables provided by the Canvas environment
+        // Global variables provided by the environment
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        let app, auth, db, userId;
+        let userLoaded = false;
+        let unsubscribeFromSnapshot;
 
-        let userId = null;
-        let userDisplayName = "Player";
-        let isAuthReady = false;
+        const shoppingList = document.getElementById('shoppingList');
+        const addItemForm = document.getElementById('addItemForm');
+        const itemInput = document.getElementById('itemInput');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+        const modalContainer = document.getElementById('modal-container');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalOkBtn = document.getElementById('modal-ok-btn');
+        const modalCancelBtn = document.getElementById('modal-cancel-btn');
+        const modalInput = document.getElementById('modal-input');
 
-        let currentQuestionIndex = 0;
-        let score = 0;
-        let quizState = 'start'; // 'start', 'quiz', 'end', 'loading'
+        // Custom modal function to replace alert() and confirm()
+        function showModal(title, message, options = {}) {
+            return new Promise((resolve) => {
+                modalTitle.textContent = title;
+                modalMessage.textContent = message;
+                modalContainer.classList.remove('hidden');
 
-        const container = document.getElementById('main-container');
+                const isConfirm = options.isConfirm || false;
+                const withInput = options.withInput || false;
 
-        const quizData = [
-            { question: "What is the capital of Japan?", category: "Social Studies", options: ["Beijing", "Seoul", "Tokyo", "Bangkok"], correctAnswer: "Tokyo" },
-            { question: "What is the largest planet in our solar system?", category: "Science", options: ["Earth", "Mars", "Jupiter", "Saturn"], correctAnswer: "Jupiter" },
-            { question: "Which word is spelled correctly?", category: "Spelling", options: ["Sepirate", "Separate", "Seperate", "Saprate"], correctAnswer: "Separate" },
-            { question: "What is the opposite of 'ubiquitous'?", category: "Vocabulary", options: ["Rare", "Common", "Everywhere", "Infinite"], correctAnswer: "Rare" },
-            { question: "Who was the first president of the United States?", category: "History", options: ["Abraham Lincoln", "Thomas Jefferson", "George Washington", "John Adams"], correctAnswer: "George Washington" },
-            { question: "How many sides does a hexagon have?", category: "Math", options: ["5", "6", "7", "8"], correctAnswer: "6" },
-            { question: "What is the largest mammal in the world?", category: "Science", options: ["Elephant", "Blue Whale", "Giraffe", "Hippopotamus"], correctAnswer: "Blue Whale" },
-            { question: "What is the official currency of Mexico?", category: "Basic Knowledge", options: ["Euro", "Peso", "Dollar", "Yen"], correctAnswer: "Peso" },
-            { question: "Which is a prime number?", category: "Math", options: ["10", "15", "17", "21"], correctAnswer: "17" },
-            { question: "What is the main function of the heart?", category: "Science", options: ["To digest food", "To pump blood", "To control thoughts", "To filter waste"], correctAnswer: "To pump blood" },
-            { question: "What does 'DIY' stand for?", category: "Basic Knowledge", options: ["Do It Yesterday", "Do It Yourself", "Doing It Yourself", "Don't Involve Yourself"], correctAnswer: "Do It Yourself" },
-            { question: "In what year did the Titanic sink?", category: "History", options: ["1910", "1912", "1914", "1916"], correctAnswer: "1912" },
-        ];
-
-        // Function to shuffle the quiz questions
-        function shuffle(array) {
-            for (let i = array.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [array[i], array[j]] = [array[j], array[i]];
-            }
-        }
-
-        async function initAuth() {
-            try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
+                if (withInput) {
+                    modalInput.classList.remove('hidden');
+                    modalInput.value = options.inputValue || '';
+                    modalOkBtn.textContent = "Save";
+                    modalCancelBtn.classList.remove('hidden');
                 } else {
-                    await signInAnonymously(auth);
+                    modalInput.classList.add('hidden');
+                    if (isConfirm) {
+                        modalCancelBtn.classList.remove('hidden');
+                        modalOkBtn.textContent = "Confirm";
+                    } else {
+                        modalCancelBtn.classList.add('hidden');
+                        modalOkBtn.textContent = "OK";
+                    }
                 }
-                userId = auth.currentUser?.uid || crypto.randomUUID();
-                isAuthReady = true;
-                renderStartScreen();
-                setupLeaderboardListener();
-            } catch (error) {
-                console.error("Firebase Auth error:", error);
-                container.innerHTML = `<div class="text-center text-red-600 font-bold">Error: Failed to initialize Firebase Auth. Please check your network connection.</div>`;
-            }
-        }
 
-        let currentLeaderboard = [];
-        function setupLeaderboardListener() {
-            if (!isAuthReady) return;
+                const handleOk = () => {
+                    modalContainer.classList.add('hidden');
+                    modalOkBtn.removeEventListener('click', handleOk);
+                    modalCancelBtn.removeEventListener('click', handleCancel);
+                    if (withInput) {
+                        resolve({ result: true, value: modalInput.value });
+                    } else {
+                        resolve(true);
+                    }
+                };
 
-            const leaderboardCollectionRef = collection(db, `artifacts/${appId}/public/data/leaderboard`);
-            const q = query(leaderboardCollectionRef, limit(10));
+                const handleCancel = () => {
+                    modalContainer.classList.add('hidden');
+                    modalOkBtn.removeEventListener('click', handleOk);
+                    modalCancelBtn.removeEventListener('click', handleCancel);
+                    if (withInput) {
+                        resolve({ result: false, value: '' });
+                    } else {
+                        resolve(false);
+                    }
+                };
 
-            onSnapshot(q, (querySnapshot) => {
-                currentLeaderboard = [];
-                querySnapshot.forEach((doc) => {
-                    currentLeaderboard.push(doc.data());
-                });
-                currentLeaderboard.sort((a, b) => b.score - a.score);
-                if (quizState === 'start') {
-                    renderStartScreen();
-                } else if (quizState === 'end') {
-                    renderEndScreen();
-                }
+                modalOkBtn.addEventListener('click', handleOk);
+                modalCancelBtn.addEventListener('click', handleCancel);
             });
         }
 
-        async function saveScore(finalScore) {
-            if (!isAuthReady) {
-                console.error("Authentication not ready. Cannot save score.");
-                return;
-            }
+        // Initialize Firebase on window load
+        window.onload = async function() {
             try {
-                const userDocRef = doc(db, `artifacts/${appId}/public/data/leaderboard`, userId);
-                await setDoc(userDocRef, {
-                    score: finalScore,
-                    userId: userId,
-                    displayName: userDisplayName,
-                    timestamp: new Date()
-                }, { merge: true }); // Use merge to avoid overwriting other user data
-                console.log("Score saved successfully!");
-            } catch (error) {
-                console.error("Error saving score:", error);
-            }
-        }
-
-        function renderStartScreen() {
-            quizState = 'start';
-            container.innerHTML = `
-                <div class="flex flex-col items-center gap-6 text-center">
-                    <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-900 leading-tight">General Knowledge Quiz</h1>
-                    <p class="text-gray-600 text-lg sm:text-xl">Test your knowledge across history, science, math, and more!</p>
-                    <div class="w-full flex flex-col sm:flex-row gap-4">
-                        <input type="text" id="usernameInput" placeholder="Enter your name" value="${userDisplayName}" class="flex-1 py-3 px-4 border border-gray-300 rounded-xl text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button id="startButton" class="btn text-lg w-full sm:w-auto">Start Quiz</button>
-                    </div>
-                    <div class="mt-4 w-full">
-                        <h2 class="text-2xl font-bold text-gray-800">High Scores</h2>
-                        <ul id="leaderboard" class="mt-2 text-left w-full max-h-60 overflow-y-auto pr-2">
-                            ${currentLeaderboard.length > 0 ? currentLeaderboard.map((entry, index) => `
-                                <li class="p-3 my-1 rounded-lg flex justify-between items-center text-gray-700 bg-gray-50 border-l-4 border-blue-500">
-                                    <span class="font-medium text-lg">${index + 1}. ${entry.displayName || 'Anonymous'}</span>
-                                    <span class="text-blue-600 font-bold text-xl">${entry.score}</span>
-                                </li>
-                            `).join('') : '<li class="text-gray-500 text-center py-4">No scores yet. Be the first!</li>'}
-                        </ul>
-                        <p class="text-sm mt-4 text-gray-500">Your user ID for this session is: <span class="font-mono text-xs break-all">${userId}</span></p>
-                    </div>
-                </div>
-            `;
-            document.getElementById('startButton').addEventListener('click', () => {
-                const username = document.getElementById('usernameInput').value.trim();
-                if (username) {
-                    userDisplayName = username;
+                if (!firebaseConfig) {
+                    console.error("Firebase config not available. Cannot initialize Firebase.");
+                    showModal("Error", "Firebase configuration is missing. The application will not work correctly.");
+                    return;
                 }
-                startQuiz();
+
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                setLogLevel('debug');
+
+                // This is the core fix: Handle authentication and data fetching within a single listener.
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        // User is signed in.
+                        userId = user.uid;
+                        userIdDisplay.textContent = userId;
+                        userLoaded = true;
+                        startListeningForData();
+                    } else {
+                        // User is signed out.
+                        userId = null;
+                        userLoaded = false;
+                        userIdDisplay.textContent = 'Signing in...';
+
+                        // Unsubscribe from any previous snapshot listener
+                        if (unsubscribeFromSnapshot) {
+                            unsubscribeFromSnapshot();
+                        }
+
+                        // Check if a custom auth token is available and use it first
+                        if (initialAuthToken) {
+                            try {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } catch (error) {
+                                console.error("Custom token sign-in failed:", error);
+                                // Fallback to anonymous if custom token fails
+                                await signInAnonymously(auth);
+                            }
+                        } else {
+                            // If no custom token, sign in anonymously
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+                showModal("Error", "Could not initialize the application. Please check the console for details.");
+            }
+        };
+
+        // Function to start listening for data, called only after auth is confirmed
+        function startListeningForData() {
+            if (!userLoaded) return; // Guard to prevent running before user is authenticated
+            
+            // Set up the onSnapshot listener for the user's private shopping list
+            const shoppingListRef = collection(db, `/artifacts/${appId}/users/${userId}/items`);
+            unsubscribeFromSnapshot = onSnapshot(shoppingListRef, (snapshot) => {
+                loadingIndicator.classList.add('hidden');
+                shoppingList.innerHTML = '';
+                if (snapshot.empty) {
+                    shoppingList.innerHTML = '<li class="text-center text-gray-500">Your list is empty!</li>';
+                }
+                snapshot.forEach(doc => {
+                    const item = doc.data();
+                    const li = document.createElement('li');
+                    li.className = 'flex items-center justify-between p-4 bg-gray-50 rounded-lg shadow-sm hover:shadow-md transition-all duration-200';
+                    li.innerHTML = `
+                        <span class="text-lg text-gray-800">${item.text}</span>
+                        <div class="flex gap-2">
+                            <button data-id="${doc.id}" class="update-btn text-blue-500 hover:text-blue-700 transition-colors">Edit</button>
+                            <button data-id="${doc.id}" class="delete-btn text-red-500 hover:text-red-700 transition-colors">Delete</button>
+                        </div>
+                    `;
+                    shoppingList.appendChild(li);
+                });
+            }, (error) => {
+                console.error("Error in snapshot listener:", error);
+                if (error.code === 'permission-denied') {
+                    showModal("Permission Denied", "You do not have permission to access this data. This might be due to an authentication issue.");
+                } else {
+                    showModal("Error", "An error occurred while fetching data.");
+                }
             });
         }
 
-        function startQuiz() {
-            quizState = 'quiz';
-            shuffle(quizData);
-            currentQuestionIndex = 0;
-            score = 0;
-            renderQuiz();
-        }
-
-        function renderQuiz() {
-            if (currentQuestionIndex >= quizData.length) {
-                endQuiz();
+        // Add a new item to the shopping list
+        addItemForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!userLoaded) {
+                showModal("Wait", "Please wait while the app is loading.");
                 return;
             }
 
-            const currentQuestion = quizData[currentQuestionIndex];
-            container.innerHTML = `
-                <div class="text-center">
-                    <div class="text-blue-500 font-bold text-sm uppercase">${currentQuestion.category}</div>
-                    <h2 class="text-2xl sm:text-3xl font-bold mt-2 text-gray-800">${currentQuestion.question}</h2>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6" id="options-container">
-                    ${currentQuestion.options.map(option => `
-                        <button class="option-btn" data-answer="${option}">${option}</button>
-                    `).join('')}
-                </div>
-                <div id="feedback" class="text-center text-lg font-bold mt-4 h-6"></div>
-                <div class="text-center text-gray-500 mt-4">Question <span id="current-q">${currentQuestionIndex + 1}</span> of ${quizData.length}</div>
-            `;
-
-            document.getElementById('options-container').querySelectorAll('button').forEach(button => {
-                button.addEventListener('click', handleAnswerClick);
-            });
-        }
-
-        function handleAnswerClick(event) {
-            const selectedAnswer = event.target.getAttribute('data-answer');
-            const feedbackEl = document.getElementById('feedback');
-            const optionsContainer = document.getElementById('options-container');
-            const currentQuestion = quizData[currentQuestionIndex];
-
-            // Disable all buttons to prevent multiple clicks
-            optionsContainer.querySelectorAll('button').forEach(btn => btn.disabled = true);
-
-            if (selectedAnswer === currentQuestion.correctAnswer) {
-                score++;
-                event.target.classList.add('correct');
-                feedbackEl.textContent = 'Correct!';
-            } else {
-                event.target.classList.add('incorrect');
-                const correctButton = Array.from(optionsContainer.querySelectorAll('button')).find(btn => btn.getAttribute('data-answer') === currentQuestion.correctAnswer);
-                if (correctButton) {
-                    correctButton.classList.add('correct');
+            const text = itemInput.value.trim();
+            if (text) {
+                try {
+                    const shoppingListRef = collection(db, `/artifacts/${appId}/users/${userId}/items`);
+                    await addDoc(shoppingListRef, {
+                        text: text,
+                        createdAt: new Date()
+                    });
+                    itemInput.value = '';
+                } catch (e) {
+                    console.error("Error adding document: ", e);
+                    showModal("Error", "Failed to add the item. Please try again.");
                 }
-                feedbackEl.textContent = `Incorrect! The correct answer was "${currentQuestion.correctAnswer}".`;
             }
+        });
 
-            setTimeout(() => {
-                currentQuestionIndex++;
-                renderQuiz();
-            }, 1500);
-        }
+        // Event listener for delete and update buttons
+        shoppingList.addEventListener('click', async (e) => {
+            const target = e.target;
+            if (target.classList.contains('delete-btn')) {
+                const id = target.dataset.id;
+                const confirmed = await showModal("Confirm Deletion", "Are you sure you want to delete this item?", { isConfirm: true });
+                if (confirmed) {
+                    try {
+                        const docRef = doc(db, `/artifacts/${appId}/users/${userId}/items`, id);
+                        await deleteDoc(docRef);
+                    } catch (e) {
+                        console.error("Error deleting document: ", e);
+                        showModal("Error", "Failed to delete the item. Please try again.");
+                    }
+                }
+            } else if (target.classList.contains('update-btn')) {
+                const id = target.dataset.id;
+                const oldText = target.closest('li').querySelector('span').textContent;
+                const response = await showModal("Edit Item", "Enter new text for the item:", { withInput: true, inputValue: oldText });
 
-        function endQuiz() {
-            quizState = 'end';
-            saveScore(score);
-            renderEndScreen();
-        }
-        
-        function renderEndScreen() {
-            quizState = 'end';
-            const totalQuestions = quizData.length;
-            const message = score === totalQuestions ? 'Perfect Score!' : score > totalQuestions / 2 ? 'Great Job!' : 'You did your best!';
-            container.innerHTML = `
-                <div class="flex flex-col items-center gap-6 text-center">
-                    <h2 class="text-3xl sm:text-4xl font-extrabold text-blue-600 leading-tight">Quiz Complete!</h2>
-                    <p class="text-gray-800 text-2xl font-semibold">${message}</p>
-                    <p class="text-5xl font-extrabold text-gray-900">${score} / ${totalQuestions}</p>
-                    <p class="text-lg text-gray-600">Your final score is: <span class="font-bold">${score}</span> points.</p>
-                    <button id="restartButton" class="btn text-lg mt-4">Play Again</button>
-                    <div class="mt-4 w-full">
-                        <h2 class="text-2xl font-bold text-gray-800">High Scores</h2>
-                        <ul id="leaderboard" class="mt-2 text-left w-full max-h-60 overflow-y-auto pr-2">
-                            ${currentLeaderboard.length > 0 ? currentLeaderboard.map((entry, index) => `
-                                <li class="p-3 my-1 rounded-lg flex justify-between items-center text-gray-700 bg-gray-50 border-l-4 border-blue-500">
-                                    <span class="font-medium text-lg">${index + 1}. ${entry.displayName || 'Anonymous'}</span>
-                                    <span class="text-blue-600 font-bold text-xl">${entry.score}</span>
-                                </li>
-                            `).join('') : '<li class="text-gray-500 text-center py-4">No scores yet. Be the first!</li>'}
-                        </ul>
-                    </div>
-                </div>
-            `;
-            document.getElementById('restartButton').addEventListener('click', renderStartScreen);
-        }
+                if (response.result && response.value.trim() !== '') {
+                    try {
+                        const docRef = doc(db, `/artifacts/${appId}/users/${userId}/items`, id);
+                        await setDoc(docRef, { text: response.value.trim() }, { merge: true });
+                    } catch (e) {
+                        console.error("Error updating document: ", e);
+                        showModal("Error", "Failed to update the item. Please try again.");
+                    }
+                }
+            }
+        });
 
-        initAuth();
     </script>
 </body>
 </html>
