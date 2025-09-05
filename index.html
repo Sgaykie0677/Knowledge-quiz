@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>General Knowledge Quiz</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .container {
+            width: 100%;
+            max-width: 768px;
+            background: white;
+            padding: 2rem;
+            border-radius: 1.5rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .btn {
+            @apply bg-blue-500 text-white font-bold py-3 px-6 rounded-full transition-transform transform hover:scale-105 active:scale-95 duration-200 shadow-md;
+        }
+        .btn:disabled {
+            @apply bg-gray-400 cursor-not-allowed;
+        }
+        .option-btn {
+            @apply bg-gray-100 text-gray-800 font-medium py-3 px-4 rounded-xl text-left transition-colors duration-200 hover:bg-gray-200;
+        }
+        .correct {
+            @apply bg-green-500 text-white hover:bg-green-600;
+        }
+        .incorrect {
+            @apply bg-red-500 text-white hover:bg-red-600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="main-container">
+        <!-- Content will be rendered here by JavaScript -->
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let userId = null;
+        let userDisplayName = "Player";
+        let isAuthReady = false;
+
+        let currentQuestionIndex = 0;
+        let score = 0;
+        let quizState = 'start'; // 'start', 'quiz', 'end', 'loading'
+
+        const container = document.getElementById('main-container');
+
+        const quizData = [
+            { question: "What is the capital of Japan?", category: "Social Studies", options: ["Beijing", "Seoul", "Tokyo", "Bangkok"], correctAnswer: "Tokyo" },
+            { question: "What is the largest planet in our solar system?", category: "Science", options: ["Earth", "Mars", "Jupiter", "Saturn"], correctAnswer: "Jupiter" },
+            { question: "Which word is spelled correctly?", category: "Spelling", options: ["Sepirate", "Separate", "Seperate", "Saprate"], correctAnswer: "Separate" },
+            { question: "What is the opposite of 'ubiquitous'?", category: "Vocabulary", options: ["Rare", "Common", "Everywhere", "Infinite"], correctAnswer: "Rare" },
+            { question: "Who was the first president of the United States?", category: "History", options: ["Abraham Lincoln", "Thomas Jefferson", "George Washington", "John Adams"], correctAnswer: "George Washington" },
+            { question: "How many sides does a hexagon have?", category: "Math", options: ["5", "6", "7", "8"], correctAnswer: "6" },
+            { question: "What is the largest mammal in the world?", category: "Science", options: ["Elephant", "Blue Whale", "Giraffe", "Hippopotamus"], correctAnswer: "Blue Whale" },
+            { question: "What is the official currency of Mexico?", category: "Basic Knowledge", options: ["Euro", "Peso", "Dollar", "Yen"], correctAnswer: "Peso" },
+            { question: "Which is a prime number?", category: "Math", options: ["10", "15", "17", "21"], correctAnswer: "17" },
+            { question: "What is the main function of the heart?", category: "Science", options: ["To digest food", "To pump blood", "To control thoughts", "To filter waste"], correctAnswer: "To pump blood" },
+            { question: "What does 'DIY' stand for?", category: "Basic Knowledge", options: ["Do It Yesterday", "Do It Yourself", "Doing It Yourself", "Don't Involve Yourself"], correctAnswer: "Do It Yourself" },
+            { question: "In what year did the Titanic sink?", category: "History", options: ["1910", "1912", "1914", "1916"], correctAnswer: "1912" },
+        ];
+
+        // Function to shuffle the quiz questions
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        async function initAuth() {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser?.uid || crypto.randomUUID();
+                isAuthReady = true;
+                renderStartScreen();
+                setupLeaderboardListener();
+            } catch (error) {
+                console.error("Firebase Auth error:", error);
+                container.innerHTML = `<div class="text-center text-red-600 font-bold">Error: Failed to initialize Firebase Auth. Please check your network connection.</div>`;
+            }
+        }
+
+        let currentLeaderboard = [];
+        function setupLeaderboardListener() {
+            if (!isAuthReady) return;
+
+            const leaderboardCollectionRef = collection(db, `artifacts/${appId}/public/data/leaderboard`);
+            const q = query(leaderboardCollectionRef, limit(10));
+
+            onSnapshot(q, (querySnapshot) => {
+                currentLeaderboard = [];
+                querySnapshot.forEach((doc) => {
+                    currentLeaderboard.push(doc.data());
+                });
+                currentLeaderboard.sort((a, b) => b.score - a.score);
+                if (quizState === 'start') {
+                    renderStartScreen();
+                } else if (quizState === 'end') {
+                    renderEndScreen();
+                }
+            });
+        }
+
+        async function saveScore(finalScore) {
+            if (!isAuthReady) {
+                console.error("Authentication not ready. Cannot save score.");
+                return;
+            }
+            try {
+                const userDocRef = doc(db, `artifacts/${appId}/public/data/leaderboard`, userId);
+                await setDoc(userDocRef, {
+                    score: finalScore,
+                    userId: userId,
+                    displayName: userDisplayName,
+                    timestamp: new Date()
+                }, { merge: true }); // Use merge to avoid overwriting other user data
+                console.log("Score saved successfully!");
+            } catch (error) {
+                console.error("Error saving score:", error);
+            }
+        }
+
+        function renderStartScreen() {
+            quizState = 'start';
+            container.innerHTML = `
+                <div class="flex flex-col items-center gap-6 text-center">
+                    <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-900 leading-tight">General Knowledge Quiz</h1>
+                    <p class="text-gray-600 text-lg sm:text-xl">Test your knowledge across history, science, math, and more!</p>
+                    <div class="w-full flex flex-col sm:flex-row gap-4">
+                        <input type="text" id="usernameInput" placeholder="Enter your name" value="${userDisplayName}" class="flex-1 py-3 px-4 border border-gray-300 rounded-xl text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button id="startButton" class="btn text-lg w-full sm:w-auto">Start Quiz</button>
+                    </div>
+                    <div class="mt-4 w-full">
+                        <h2 class="text-2xl font-bold text-gray-800">High Scores</h2>
+                        <ul id="leaderboard" class="mt-2 text-left w-full max-h-60 overflow-y-auto pr-2">
+                            ${currentLeaderboard.length > 0 ? currentLeaderboard.map((entry, index) => `
+                                <li class="p-3 my-1 rounded-lg flex justify-between items-center text-gray-700 bg-gray-50 border-l-4 border-blue-500">
+                                    <span class="font-medium text-lg">${index + 1}. ${entry.displayName || 'Anonymous'}</span>
+                                    <span class="text-blue-600 font-bold text-xl">${entry.score}</span>
+                                </li>
+                            `).join('') : '<li class="text-gray-500 text-center py-4">No scores yet. Be the first!</li>'}
+                        </ul>
+                        <p class="text-sm mt-4 text-gray-500">Your user ID for this session is: <span class="font-mono text-xs break-all">${userId}</span></p>
+                    </div>
+                </div>
+            `;
+            document.getElementById('startButton').addEventListener('click', () => {
+                const username = document.getElementById('usernameInput').value.trim();
+                if (username) {
+                    userDisplayName = username;
+                }
+                startQuiz();
+            });
+        }
+
+        function startQuiz() {
+            quizState = 'quiz';
+            shuffle(quizData);
+            currentQuestionIndex = 0;
+            score = 0;
+            renderQuiz();
+        }
+
+        function renderQuiz() {
+            if (currentQuestionIndex >= quizData.length) {
+                endQuiz();
+                return;
+            }
+
+            const currentQuestion = quizData[currentQuestionIndex];
+            container.innerHTML = `
+                <div class="text-center">
+                    <div class="text-blue-500 font-bold text-sm uppercase">${currentQuestion.category}</div>
+                    <h2 class="text-2xl sm:text-3xl font-bold mt-2 text-gray-800">${currentQuestion.question}</h2>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6" id="options-container">
+                    ${currentQuestion.options.map(option => `
+                        <button class="option-btn" data-answer="${option}">${option}</button>
+                    `).join('')}
+                </div>
+                <div id="feedback" class="text-center text-lg font-bold mt-4 h-6"></div>
+                <div class="text-center text-gray-500 mt-4">Question <span id="current-q">${currentQuestionIndex + 1}</span> of ${quizData.length}</div>
+            `;
+
+            document.getElementById('options-container').querySelectorAll('button').forEach(button => {
+                button.addEventListener('click', handleAnswerClick);
+            });
+        }
+
+        function handleAnswerClick(event) {
+            const selectedAnswer = event.target.getAttribute('data-answer');
+            const feedbackEl = document.getElementById('feedback');
+            const optionsContainer = document.getElementById('options-container');
+            const currentQuestion = quizData[currentQuestionIndex];
+
+            // Disable all buttons to prevent multiple clicks
+            optionsContainer.querySelectorAll('button').forEach(btn => btn.disabled = true);
+
+            if (selectedAnswer === currentQuestion.correctAnswer) {
+                score++;
+                event.target.classList.add('correct');
+                feedbackEl.textContent = 'Correct!';
+            } else {
+                event.target.classList.add('incorrect');
+                const correctButton = Array.from(optionsContainer.querySelectorAll('button')).find(btn => btn.getAttribute('data-answer') === currentQuestion.correctAnswer);
+                if (correctButton) {
+                    correctButton.classList.add('correct');
+                }
+                feedbackEl.textContent = `Incorrect! The correct answer was "${currentQuestion.correctAnswer}".`;
+            }
+
+            setTimeout(() => {
+                currentQuestionIndex++;
+                renderQuiz();
+            }, 1500);
+        }
+
+        function endQuiz() {
+            quizState = 'end';
+            saveScore(score);
+            renderEndScreen();
+        }
+        
+        function renderEndScreen() {
+            quizState = 'end';
+            const totalQuestions = quizData.length;
+            const message = score === totalQuestions ? 'Perfect Score!' : score > totalQuestions / 2 ? 'Great Job!' : 'You did your best!';
+            container.innerHTML = `
+                <div class="flex flex-col items-center gap-6 text-center">
+                    <h2 class="text-3xl sm:text-4xl font-extrabold text-blue-600 leading-tight">Quiz Complete!</h2>
+                    <p class="text-gray-800 text-2xl font-semibold">${message}</p>
+                    <p class="text-5xl font-extrabold text-gray-900">${score} / ${totalQuestions}</p>
+                    <p class="text-lg text-gray-600">Your final score is: <span class="font-bold">${score}</span> points.</p>
+                    <button id="restartButton" class="btn text-lg mt-4">Play Again</button>
+                    <div class="mt-4 w-full">
+                        <h2 class="text-2xl font-bold text-gray-800">High Scores</h2>
+                        <ul id="leaderboard" class="mt-2 text-left w-full max-h-60 overflow-y-auto pr-2">
+                            ${currentLeaderboard.length > 0 ? currentLeaderboard.map((entry, index) => `
+                                <li class="p-3 my-1 rounded-lg flex justify-between items-center text-gray-700 bg-gray-50 border-l-4 border-blue-500">
+                                    <span class="font-medium text-lg">${index + 1}. ${entry.displayName || 'Anonymous'}</span>
+                                    <span class="text-blue-600 font-bold text-xl">${entry.score}</span>
+                                </li>
+                            `).join('') : '<li class="text-gray-500 text-center py-4">No scores yet. Be the first!</li>'}
+                        </ul>
+                    </div>
+                </div>
+            `;
+            document.getElementById('restartButton').addEventListener('click', renderStartScreen);
+        }
+
+        initAuth();
+    </script>
+</body>
+</html>
